@@ -11,9 +11,30 @@ st.set_page_config(page_title="Visualizador de Pases", layout="centered")
 st.title("Visualizador de Pases en Vivo")
 st.image("https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSSGm_KqdUINwCyCNhCosSh1VuJ0VgqCYs3Qd5ooAfaWDQ5n4Lc3DOtrx0&s=10", width=300)
 
-# Cargar y procesar los datos con caché para acelerar la app
+# 1. Cargar las ediciones disponibles del Mundial
 @st.cache_data
-def load_data(match_id=3857255):
+def get_world_cups():
+    comps = sb.competitions()
+    wc_comps = comps[comps['competition_name'] == 'FIFA World Cup'].copy()
+    wc_comps.sort_values(by='season_name', ascending=False, inplace=True)
+    return wc_comps
+
+# 2. Cargar partidos de una edición específica
+@st.cache_data
+def get_matches_for_edition(competition_id, season_id):
+    df_matches = sb.matches(competition_id=competition_id, season_id=season_id)
+    df_matches['label'] = (
+        df_matches['home_team'] + " " + 
+        df_matches['home_score'].fillna(0).astype(int).astype(str) + " vs " + 
+        df_matches['away_score'].fillna(0).astype(int).astype(str) + " " + 
+        df_matches['away_team'] + " (" + 
+        df_matches['competition_stage'] + ")"
+    )
+    return df_matches[['match_id', 'label']].sort_values('label')
+
+# 3. Cargar y procesar los pases del partido seleccionado
+@st.cache_data
+def load_data(match_id):
     events = sb.events(match_id=match_id)
     variables = ['minute', 'second', 'period', 'location', 'pass_end_location', 
                  'player', 'pass_recipient', 'team', 'type']
@@ -28,17 +49,42 @@ def load_data(match_id=3857255):
     final.drop(columns=['location', 'pass_end_location'], inplace=True)
     return final
 
-# Carga de datos
-with st.spinner("Cargando datos de StatsBomb..."):
-    final = load_data()
+# --- Selección de Datos en la UI ---
 
-# Interactividad: reemplazo de ipywidgets por st.slider
+world_cups = get_world_cups()
+
+# Primer menú desplegable: Edición del Mundial
+selected_season = st.selectbox(
+    "1. Selecciona la edición del Mundial:", 
+    world_cups['season_name'].tolist()
+)
+
+# Obtener IDs correspondientes a la edición elegida
+selected_wc = world_cups[world_cups['season_name'] == selected_season].iloc[0]
+comp_id = int(selected_wc['competition_id'])
+season_id = int(selected_wc['season_id'])
+
+# Segundo menú desplegable: Partidos de esa edición
+matches = get_matches_for_edition(comp_id, season_id)
+selected_match_label = st.selectbox(
+    "2. Selecciona el partido:", 
+    matches['label'].tolist()
+)
+
+# ID del partido seleccionado
+match_id = matches[matches['label'] == selected_match_label]['match_id'].values[0]
+
+# Carga de datos del partido
+with st.spinner("Cargando pases del partido..."):
+    final = load_data(match_id)
+
+# --- Visualización ---
+
 min_minuto = int(final['minute'].min())
 max_minuto = int(final['minute'].max())
 
-minuto = st.slider("Selecciona el minuto:", min_value=min_minuto, max_value=max_minuto, value=0)
+minuto = st.slider("Selecciona el minuto:", min_value=min_minuto, max_value=max_minuto, value=min_minuto)
 
-# Gráfico con mplsoccer y seaborn
 pitch = Pitch(pitch_color='grass', line_color='white', stripe=True)
 fig, ax = pitch.draw()
 
@@ -56,5 +102,4 @@ if not df_minuto.empty:
 else:
     ax.set_title(f"Sin pases registrados en el minuto {minuto}", color="white")
 
-# Renderizar el gráfico en Streamlit
 st.pyplot(fig)
